@@ -190,6 +190,7 @@ int getWindowSize(int *rows, int *cols)
 	// 是否得到窗口大小
 	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) 
 	{
+		// 移动到右下角
     		if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) 
 			return -1;
     		return getCursorPosition(rows, cols);
@@ -230,7 +231,7 @@ void editorOpen(char *filename)
 	while ((linelen = getline(&line, &linecap, fp)) != -1)
 	{
 		while (linelen > 0 && (line[linelen - 1] == '\n' || 
-				       line[linelen - 1] == '\r'))
+					line[linelen - 1] == '\r'))
 			linelen--;
 		editorAppendRow(line, linelen);
 	}
@@ -265,14 +266,19 @@ void abFree(struct abuf *ab)
 }
 
 /*** output ***/
+
+
+
 void editorDrawRows(struct abuf *ab)
 {
 	int y;
 	for (y = 0; y < E.screenrows; y++)
 	{
 		int filerow = E.rowoff + y;
+		// 如果浏览行数大于文件内容行数，则不会显示
         	if (filerow >= E.numrows)
 	        {
+			// 如果没有读取文本，在1/3处打印软件名和版本号
 			if (E.numrows == 0 && y == E.screenrows / 3) 
 			{
 				char welcome[80];
@@ -300,8 +306,10 @@ void editorDrawRows(struct abuf *ab)
 
 
 
-		// 清除当前行
+		// 清除当前行，清除的是打开文本前的终端内容
 		abAppend(ab, "\x1b[K", 3);
+
+		// 为文件文本添加换行符
 		if (y < E.screenrows - 1)
 		{
 			abAppend(ab, "\r\n", 2);
