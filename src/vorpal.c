@@ -1,4 +1,5 @@
 /*** include ***/
+#pragma region	
 
 #define _DEFAULT_SOURCE
 #define _BSD_SOURCE
@@ -14,7 +15,10 @@
 #include <termios.h>
 #include <unistd.h>
 
+#pragma endregion
+
 /*** define ***/
+#pragma region
 
 #define VORPAL_VERSION "0.0.1"
 
@@ -35,7 +39,10 @@ enum editorKey
 	DEL_KEY
 };
 
+#pragma endregion
+
 /*** data **/
+#pragma region
 
 // 存储一行文本
 typedef struct erow
@@ -58,7 +65,10 @@ struct editorConfig
 
 struct editorConfig E;
 
+#pragma endregion
+
 /*** terminal ***/
+#pragma region
 
 // 当出现错误时清空屏幕内容并将光标一到左上角，打印错误信息
 void die(const char *s)
@@ -232,7 +242,10 @@ int getWindowSize(int *rows, int *cols)
 	}
 }
 
+#pragma endregion
+
 /*** row operations ***/
+#pragma region
 
 // 输出缓冲区，立即展示一页内的所有内容
 void editorAppendRow(char *s, size_t len)
@@ -273,8 +286,10 @@ void editorOpen(char *filename)
 	fclose(fp);
 }
 
-/*** appenf buffer ***/
+#pragma endregion
 
+/*** appenf buffer ***/
+#pragma region
 struct abuf
 {
 	char *b;
@@ -299,7 +314,15 @@ void abFree(struct abuf *ab)
 	free(ab->b);
 }
 
+#pragma endregion
+
 /*** output ***/
+#pragma region
+
+void editorScroll()
+{
+
+}
 
 void editorDrawRows(struct abuf *ab)
 {
@@ -349,8 +372,11 @@ void editorDrawRows(struct abuf *ab)
 	}
 }
 
+// 编辑刷新后的界面
 void editorRefreashScreen()
 {
+	editorScroll();
+
 	// 创建缓冲区
 	struct abuf ab = ABUF_INIT;
 
@@ -371,8 +397,13 @@ void editorRefreashScreen()
 	abFree(&ab);
 }
 
+#pragma endregion
+
 /*** input ***/
 
+#pragma region
+
+// 控制光标移动
 void editorMoveCursor(int key)
 {
 	switch (key)
@@ -396,6 +427,7 @@ void editorMoveCursor(int key)
 	}
 }
 
+// 按键映射
 void editorProcessKeypress()
 {
 	int c = editorReadKey();
@@ -403,6 +435,7 @@ void editorProcessKeypress()
 	switch (c)
 	{
 	case CTRL_KEY('q'):
+		// 退出时清屏
 		write(STDOUT_FILENO, "\x1b[2J", 4);
 		write(STDOUT_FILENO, "\x1b[H", 3);
 		exit(0);
@@ -436,8 +469,12 @@ void editorProcessKeypress()
 	}
 }
 
-/*** init ***/
+#pragma endregion
 
+/*** init ***/
+#pragma region
+
+// 初始化窗口，文本信息
 void initEditor()
 {
 	E.cx = 0;
@@ -467,3 +504,5 @@ int main(int argc, char *args[])
 
 	return 0;
 }
+
+#pragma endregion
