@@ -1,0 +1,8 @@
+[
+{
+  "directory": "/home/mimsy/Veitor/build",
+  "command": "/usr/bin/cc   -g -o CMakeFiles/Veitor.dir/src/vorpal.c.o -c /home/mimsy/Veitor/src/vorpal.c",
+  "file": "/home/mimsy/Veitor/src/vorpal.c",
+  "output": "CMakeFiles/Veitor.dir/src/vorpal.c.o"
+}
+]
