@@ -267,7 +267,6 @@ void editorAppendRow(char *s, size_t len)
 // 打开文件，读取
 void editorOpen(char *filename)
 {
-
 	FILE *fp = fopen(filename, "r");
 	if (!fp)
 		die("fopen");
