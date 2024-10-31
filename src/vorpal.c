@@ -301,7 +301,7 @@ struct abuf
 
 #define ABUF_INIT {NULL, 0}
 
-向结构体中添加一行文本
+// 向结构体中添加一行文本
 void abAppend(struct abuf *ab, const char *s, int len)
 {
 	char *new = realloc(ab->b, ab->len + len);
