@@ -1,5 +1,5 @@
 /*** include ***/
-#pragma region	
+#pragma region
 
 #define _DEFAULT_SOURCE
 #define _BSD_SOURCE
@@ -14,7 +14,7 @@
 #include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
-
+ 
 #pragma endregion
 
 /*** define ***/
@@ -54,12 +54,13 @@ typedef struct erow
 // 定义终端配置结构体
 struct editorConfig
 {
-	int cx, cy;		// 光标坐标
-	int rowoff;		// 行偏移量
+	int cx, cy;			// 文本坐标
+	int rowoff;		   // 行偏移量
+	int coloff;			// 列偏移量
 	int screenrows; // 终端行数
-	int screencols; // 终端列数
+	int screencols;  // 终端列数
 	int numrows;	// 打开文本的行数
-	erow *row;		// 存储文本的数组
+	erow *row;		 // 存储文本的数组
 	struct termios orig_termios;
 };
 
@@ -290,6 +291,8 @@ void editorOpen(char *filename)
 
 /*** appenf buffer ***/
 #pragma region
+
+// 存储文本内容的结构体
 struct abuf
 {
 	char *b;
@@ -298,6 +301,7 @@ struct abuf
 
 #define ABUF_INIT {NULL, 0}
 
+向结构体中添加一行文本
 void abAppend(struct abuf *ab, const char *s, int len)
 {
 	char *new = realloc(ab->b, ab->len + len);
@@ -321,7 +325,25 @@ void abFree(struct abuf *ab)
 
 void editorScroll()
 {
+	// 当文本纵坐标小于行偏移量时
+	if (E.cy < E.rowoff)
+	{
+		E.rowoff = E.cy;
+	}
+	// 当文本纵坐标大于行偏移量+终端行数时
+	if (E.cy >= E.rowoff + E.screenrows)
+	{
+		E.rowoff = E.cy - E.screenrows + 1;
+	}
 
+	if (E.cx < E.coloff)
+	{
+		E.coloff = E.cx;
+	}
+	if (E.cx >= E.coloff + E.screencols)
+	{
+		E.coloff = E.cx - E.screencols + 1;
+	}
 }
 
 void editorDrawRows(struct abuf *ab)
@@ -329,7 +351,7 @@ void editorDrawRows(struct abuf *ab)
 	int y;
 	for (y = 0; y < E.screenrows; y++)
 	{
-		int filerow = E.rowoff + y;
+		int filerow = y + E.rowoff;
 		// 如果行偏移量大于文件内容行数，则不会显示
 		if (filerow >= E.numrows)
 		{
@@ -355,13 +377,14 @@ void editorDrawRows(struct abuf *ab)
 		}
 		else
 		{
-			int len = E.row[filerow].size;
-			if (len > E.screencols)
-				len = E.screencols;
-			abAppend(ab, E.row[filerow].chars, len);
+			int len = E.row[filerow].size - E.coloff;
+			// 即列偏移量大于这行文本长度时
+			if (len < 0) len = 0;
+			if (len > E.screencols)	len = E.screencols;
+			abAppend(ab, &E.row[filerow].chars[E.coloff], len);
 		}
 
-		// 清除当前行，清除打开文本前的终端内容
+		// 清除当前行，清除刷新前的终端内容
 		abAppend(ab, "\x1b[K", 3);
 
 		// 为文件文本添加换行符
@@ -373,7 +396,7 @@ void editorDrawRows(struct abuf *ab)
 }
 
 // 编辑刷新后的界面
-void editorRefreashScreen()
+void editorRefreshScreen()
 {
 	editorScroll();
 
@@ -389,7 +412,7 @@ void editorRefreashScreen()
 
 	// 移动光标，显示光标
 	char buf[32];
-	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.cx - E.coloff) + 1);
 	abAppend(&ab, buf, strlen(buf));
 	abAppend(&ab, "\x1b[?25h", 6);
 
@@ -400,7 +423,6 @@ void editorRefreashScreen()
 #pragma endregion
 
 /*** input ***/
-
 #pragma region
 
 // 控制光标移动
@@ -413,15 +435,15 @@ void editorMoveCursor(int key)
 			E.cx--;
 		break;
 	case ARROW_RIGHT:
-		if (E.cx != E.screencols - 1)
-			E.cx++;
+		E.cx++;
 		break;
 	case ARROW_UP:
 		if (E.cy != 0)
 			E.cy--;
 		break;
 	case ARROW_DOWN:
-		if (E.cy != E.screenrows - 1)
+		// 当文本坐标小于文本行数时
+		if (E.cy < E.numrows )
 			E.cy++;
 		break;
 	}
@@ -480,6 +502,7 @@ void initEditor()
 	E.cx = 0;
 	E.cy = 0;
 	E.rowoff = 0;
+	E.coloff = 0;
 	E.numrows = 0;
 	E.row = NULL;
 
@@ -493,12 +516,13 @@ int main(int argc, char *args[])
 {
 	enableRawMode();
 	initEditor();
-	if (argc >= 2)
-		editorOpen(args[1]);
+	// if (argc >= 2)
+	// 	editorOpen(args[1]);
+	editorOpen("../../src/vorpal.c");
 
 	while (1)
 	{
-		editorRefreashScreen();
+		editorRefreshScreen();
 		editorProcessKeypress();
 	}
 
