@@ -428,14 +428,34 @@ void editorRefreshScreen()
 // 控制光标移动
 void editorMoveCursor(int key)
 {
+	// 获取并判断下一行是否存在
+	erow * row = (E.cy > E.numrows) ? NULL : &E.row[E.cy];
+
 	switch (key)
 	{
 	case ARROW_LEFT:
 		if (E.cx != 0)
+		{
 			E.cx--;
+		}
+		else if (E.cy != 0)
+		{
+			row = &E.row[E.cy - 1];
+			E.cy--;
+			E.cx = row->size;
+		}
 		break;
 	case ARROW_RIGHT:
-		E.cx++;
+		if (row && E.cx < row->size)
+		{
+			E.cx++;
+		}
+		else if (row && E.cx == row->size)
+		{
+			E.cy++;
+			E.cx = 0;
+		}
+		
 		break;
 	case ARROW_UP:
 		if (E.cy != 0)
@@ -447,6 +467,12 @@ void editorMoveCursor(int key)
 			E.cy++;
 		break;
 	}
+
+	row = (E.cy > E.numrows) ? NULL : &E.row[E.cy];
+	int rowlen = row ? row->size : 0;
+	if (E.cx > rowlen)
+		E.cx = rowlen;
+
 }
 
 // 按键映射
@@ -518,7 +544,7 @@ int main(int argc, char *args[])
 	initEditor();
 	// if (argc >= 2)
 	// 	editorOpen(args[1]);
-	editorOpen("../../src/vorpal.c");
+	editorOpen("../../src/Makefile");
 
 	while (1)
 	{
