@@ -20,7 +20,8 @@
 /*** define ***/
 #pragma region
 
-#define VORPAL_VERSION "0.0.1"
+#define VEITOR_VERSION "0.0.1"
+#define VEITOR_TAP_STOP 8
 
 // (a & 0x1f) =  (11000001 & 00011111) = 1
 #define CTRL_KEY(k) ((k) & 0x1f)
@@ -48,13 +49,16 @@ enum editorKey
 typedef struct erow
 {
 	int size;
+	int rsize;
 	char *chars;
+	char *render;
 } erow;
 
 // 定义终端配置结构体
 struct editorConfig
 {
 	int cx, cy;			// 文本坐标
+	int rx;
 	int rowoff;		   // 行偏移量
 	int coloff;			// 列偏移量
 	int screenrows; // 终端行数
@@ -248,6 +252,49 @@ int getWindowSize(int *rows, int *cols)
 /*** row operations ***/
 #pragma region
 
+int editorRowCxToRx(erow *row, int cx)
+{
+	int rx = 0;
+	int j;
+	for (j = 0; j < cx; j++)
+	{
+		if (row->chars[j] == '\t')
+			rx += (VEITOR_TAP_STOP - 1) - (j % VEITOR_TAP_STOP);
+		rx++;
+	}
+
+	return rx;
+}
+
+void editorUpdateRow(struct erow *row)
+{
+	int j;
+	int tab = 0;
+	for (j = 0; j < row->size; j++)
+		if (row->chars[j] == '\t')
+			tab++;
+
+	free(row->render);
+	row->render = malloc(row->size + tab * (VEITOR_TAP_STOP - 1) + 1);
+
+	int index = 0;
+	for (j = 0; j < row->size; j++)
+	{
+		if (row->chars[j] == '\t')
+		{
+			row->render[index++] = ' ';
+			while(index % VEITOR_TAP_STOP != 0) 
+				row->render[index++] = ' ';
+		}
+		else
+		{
+			row->render[index++] = row->chars[j];
+		}
+	}
+	row->render[index] = '\0';
+	row->rsize = index;
+}
+
 // 输出缓冲区，立即展示一页内的所有内容
 void editorAppendRow(char *s, size_t len)
 {
@@ -259,6 +306,11 @@ void editorAppendRow(char *s, size_t len)
 	E.row[at].chars = malloc(len + 1);
 	memcpy(E.row[at].chars, s, len);
 	E.row[at].chars[len] = '\0';
+
+	E.row[at].rsize = 0;
+	E.row[at].render = NULL;
+	editorUpdateRow((&E.row[at]));
+
 	E.numrows++;
 }
 
@@ -324,6 +376,12 @@ void abFree(struct abuf *ab)
 
 void editorScroll()
 {
+	E.rx = E.cx;
+	if (E.cy < E.numrows)
+	{
+		E.rx = editorRowCxToRx(&E.row[E.cy], E.cx);
+	}
+
 	// 当文本纵坐标小于行偏移量时
 	if (E.cy < E.rowoff)
 	{
@@ -335,13 +393,13 @@ void editorScroll()
 		E.rowoff = E.cy - E.screenrows + 1;
 	}
 
-	if (E.cx < E.coloff)
+	if (E.rx < E.coloff)
 	{
-		E.coloff = E.cx;
+		E.coloff = E.rx;
 	}
-	if (E.cx >= E.coloff + E.screencols)
+	if (E.rx >= E.coloff + E.screencols)
 	{
-		E.coloff = E.cx - E.screencols + 1;
+		E.coloff = E.rx - E.screencols + 1;
 	}
 }
 
@@ -359,7 +417,7 @@ void editorDrawRows(struct abuf *ab)
 			{
 				char welcome[80];
 				int welcomelen = snprintf(welcome, sizeof(welcome),
-										  "Vorpal editor -- version %s", VORPAL_VERSION);
+										  "Vorpal editor -- version %s", VEITOR_VERSION);
 				if (welcomelen > E.screencols)
 					welcomelen = E.screencols;
 				int padding = (E.screencols - welcomelen) / 2;
@@ -376,11 +434,11 @@ void editorDrawRows(struct abuf *ab)
 		}
 		else
 		{
-			int len = E.row[filerow].size - E.coloff;
+			int len = E.row[filerow].rsize - E.coloff;
 			// 即列偏移量大于这行文本长度时
 			if (len < 0) len = 0;
 			if (len > E.screencols)	len = E.screencols;
-			abAppend(ab, &E.row[filerow].chars[E.coloff], len);
+			abAppend(ab, &E.row[filerow].render[E.coloff], len);
 		}
 
 		// 清除当前行，清除刷新前的终端内容
@@ -411,7 +469,7 @@ void editorRefreshScreen()
 
 	// 移动光标，显示光标
 	char buf[32];
-	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.cx - E.coloff) + 1);
+	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1, (E.rx - E.coloff) + 1);
 	abAppend(&ab, buf, strlen(buf));
 	abAppend(&ab, "\x1b[?25h", 6);
 
@@ -526,6 +584,7 @@ void initEditor()
 {
 	E.cx = 0;
 	E.cy = 0;
+	E.rx = 0;
 	E.rowoff = 0;
 	E.coloff = 0;
 	E.numrows = 0;
@@ -543,7 +602,7 @@ int main(int argc, char *args[])
 	initEditor();
 	// if (argc >= 2)
 	// 	editorOpen(args[1]);
-	editorOpen("../../src/Makefile");
+	editorOpen("../../src/vorpal.c");
 
 	while (1)
 	{
