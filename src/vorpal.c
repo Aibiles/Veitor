@@ -565,7 +565,6 @@ void editorMoveCursor(int key)
 			E.cy++;
 			E.cx = 0;
 		}
-		
 		break;
 	case ARROW_UP:
 		if (E.cy != 0)
@@ -604,7 +603,7 @@ void editorProcessKeypress()
 		break;
 	case END_KEY:
 		if (E.cy < E.numrows)
-			E.cx = E.row[E.cy].rsize;
+			E.cx = E.row[E.cy].size;
 		break;
 
 	case PAGE_UP:
@@ -668,8 +667,8 @@ int main(int argc, char *args[])
 	enableRawMode();
 	initEditor();
 	// if (argc >= 2)
-	// 	editorOpen(args[1]);
-	editorOpen("../../src/vorpal.c");
+		// editorOpen(args[1]);
+	editorOpen("../../src/Makefile");
 
 	editorSetStatusMessage("HELP: Ctrl-Q = quit");
 
