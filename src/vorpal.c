@@ -16,6 +16,7 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#include <stdbool.h>
  
 #pragma endregion
 
@@ -52,7 +53,6 @@ typedef struct erow
 {
 	int size;
 	int rsize;
-	int length;
 	char *chars;
 	char *render;
 } erow;
@@ -258,6 +258,11 @@ int getWindowSize(int *rows, int *cols)
 /*** row operations ***/
 #pragma region
 
+// 判断字符是否是多字节的一部分 10XXXXXX
+bool is_continuation_byte(char c) {
+    return (c & 0xC0) == 0x80;
+}
+
 // 检查当前字符是否为多字节字符（超过 2 个字节）
 int char_byte(char str) {
     if ((str & 0xF0) == 0xF0) {  // 检查前 4 位是否为 11110
@@ -275,14 +280,18 @@ int editorRowCxToRx(erow *row, int cx)
 {
     int j = 0;
     int rx = 0;
+	// 使用字符的字节数替换 字节递增
     while (j < cx) 
 	{
+		int bytesize = char_byte(row->chars[j]);
         if (row->chars[j] == '\t') 
 		{
             rx += (VEITOR_TAP_STOP - 1) - (rx % VEITOR_TAP_STOP);
         }
+		else if (bytesize > 2)
+			rx++;
         rx++;
-        j += char_byte(row->chars[j]);
+        j += bytesize;
 	}
     return rx;
 }
@@ -291,6 +300,7 @@ void editorUpdateRow(struct erow *row)
 {
 	int j = 0;
 	int tab = 0;
+	// 使用字符的字节数替换 字节递增
 	while (j < row->size)
 	{
 		int bytesize = char_byte(row->chars[j]);
@@ -305,6 +315,7 @@ void editorUpdateRow(struct erow *row)
 
 	int index = 0;
 	j = 0;
+	// 使用字符的字节数替换 字节递增
 	while (j < row->size) 
 	{
         int bytesize = char_byte(row->chars[j]);
@@ -321,19 +332,6 @@ void editorUpdateRow(struct erow *row)
         }
         j += bytesize;
     }
-	// for (j = 0; j < row->size; j++)
-	// {
-	// 	if (row->chars[j] == '\t')
-	// 	{
-	// 		row->render[index++] = ' ';
-	// 		while(index % VEITOR_TAP_STOP != 0) 
-	// 			row->render[index++] = ' ';
-	// 	}
-	// 	else
-	// 	{
-	// 		row->render[index++] = row->chars[j];
-	// 	}
-	// }
 	row->render[index] = '\0';
 	row->rsize = index;
 }
@@ -350,7 +348,6 @@ void editorAppendRow(char *s, size_t len)
 	memcpy(E.row[at].chars, s, len);
 	E.row[at].chars[len] = '\0';
 
-	E.row[at].length = 0;
 	E.row[at].rsize = 0;
 	E.row[at].render = NULL;
 	editorUpdateRow((&E.row[at]));
@@ -584,8 +581,20 @@ void editorMoveCursor(int key)
 	case ARROW_LEFT:
 		if (E.cx != 0)
 		{
-			// E.cx--;
-			E.cx -= char_byte(row->chars[E.cx - 1]);
+			if (is_continuation_byte(row->chars[E.cx - 1]) && !isalnum(row->chars[E.cx - 1])) 
+			{
+				// 如果前面一个字符是多字节字符的后续字节，继续向左移动，
+				while (E.cx > 0 && is_continuation_byte(row->chars[E.cx - 1])) 
+				{
+					E.cx--;
+				}
+				// 多字节字符的第一个
+				E.cx--;
+			} 
+			else 
+			{
+				E.cx--;
+			}
 		}
 		else if (E.cy != 0)
 		{
@@ -613,11 +622,14 @@ void editorMoveCursor(int key)
 	case ARROW_DOWN:
 		// 当文本坐标小于文本行数时
 		if (E.cy < E.numrows )
+		{
 			E.cy++;
+			E.cx = E.rx;
+		}
 		break;
 	}
 
-	row = (E.cy > E.numrows) ? NULL : &E.row[E.cy];
+	row = (E.cy < E.numrows) ? &E.row[E.cy] : NULL;
 	int rowlen = row ? row->size : 0;
 	if (E.cx > rowlen)
 		E.cx = rowlen;
