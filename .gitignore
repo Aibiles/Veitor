@@ -26,4 +26,11 @@ Makefile
 # Ignore other common build artifacts
 *.log
 *.out
+<<<<<<< HEAD
 *.errd
+=======
+*.errd
+
+src/test.c
+src/test
+>>>>>>> dev
