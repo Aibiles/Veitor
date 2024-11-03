@@ -52,6 +52,7 @@ typedef struct erow
 {
 	int size;
 	int rsize;
+	int length;
 	char *chars;
 	char *render;
 } erow;
@@ -257,51 +258,87 @@ int getWindowSize(int *rows, int *cols)
 /*** row operations ***/
 #pragma region
 
-// 将tab转换为指定空格长度
-int editorRowCxToRx(erow *row, int cx)
-{
-	int rx = 0;
-	int j;
-	for (j = 0; j < cx; j++)
-	{
-		if (row->chars[j] == '\t')
-			rx += (VEITOR_TAP_STOP - 1) - (j % VEITOR_TAP_STOP);
-		rx++;
-	}
+// 检查当前字符是否为多字节字符（超过 2 个字节）
+int char_byte(char str) {
+    if ((str & 0xF0) == 0xF0) {  // 检查前 4 位是否为 11110
+        return 4;
+    } else if ((str & 0xE0) == 0xE0) {  // 检查前 3 位是否为 1110
+        return 3;
+    } else if ((str & 0xC0) == 0xC0) {  // 检查前 2 位是否为 110
+        return 2;
+    }
+    return 1;
+}
 
-	return rx;
+// 将tab转换为指定空格长度，实现tab的秘密   ；按照字节大小读取
+int editorRowCxToRx(erow *row, int cx) 
+{
+    int j = 0;
+    int rx = 0;
+    while (j < cx) 
+	{
+        if (row->chars[j] == '\t') 
+		{
+            rx += (VEITOR_TAP_STOP - 1) - (rx % VEITOR_TAP_STOP);
+        }
+        rx++;
+        j += char_byte(row->chars[j]);
+	}
+    return rx;
 }
 
 void editorUpdateRow(struct erow *row)
 {
-	int j;
+	int j = 0;
 	int tab = 0;
-	for (j = 0; j < row->size; j++)
+	while (j < row->size)
+	{
+		int bytesize = char_byte(row->chars[j]);
 		if (row->chars[j] == '\t')
 			tab++;
+		
+		j += bytesize;
+	}
 
 	free(row->render);
 	row->render = malloc(row->size + tab * (VEITOR_TAP_STOP - 1) + 1);
 
 	int index = 0;
-	for (j = 0; j < row->size; j++)
+	j = 0;
+	while (j < row->size) 
 	{
-		if (row->chars[j] == '\t')
+        int bytesize = char_byte(row->chars[j]);
+        if (row->chars[j] == '\t') 
 		{
-			row->render[index++] = ' ';
-			while(index % VEITOR_TAP_STOP != 0) 
-				row->render[index++] = ' ';
-		}
-		else
+            row->render[index++] = ' ';
+            while (index % VEITOR_TAP_STOP != 0) 
+                row->render[index++] = ' ';
+        } 
+		else 
 		{
-			row->render[index++] = row->chars[j];
-		}
-	}
+            memcpy(&row->render[index], &row->chars[j], bytesize);
+            index += bytesize;
+        }
+        j += bytesize;
+    }
+	// for (j = 0; j < row->size; j++)
+	// {
+	// 	if (row->chars[j] == '\t')
+	// 	{
+	// 		row->render[index++] = ' ';
+	// 		while(index % VEITOR_TAP_STOP != 0) 
+	// 			row->render[index++] = ' ';
+	// 	}
+	// 	else
+	// 	{
+	// 		row->render[index++] = row->chars[j];
+	// 	}
+	// }
 	row->render[index] = '\0';
 	row->rsize = index;
 }
 
-// 输出缓冲区，立即展示一页内的所有内容
+// 读取文件内容
 void editorAppendRow(char *s, size_t len)
 {
 	// realloc可以调整分配内存大小，如果小了会截断
@@ -313,6 +350,7 @@ void editorAppendRow(char *s, size_t len)
 	memcpy(E.row[at].chars, s, len);
 	E.row[at].chars[len] = '\0';
 
+	E.row[at].length = 0;
 	E.row[at].rsize = 0;
 	E.row[at].render = NULL;
 	editorUpdateRow((&E.row[at]));
@@ -468,7 +506,7 @@ void editorDrawStatuBar(struct abuf*ab)
 	char status[80], rstatus[80];
 	int len = snprintf(status, sizeof(status), "%.20s - %d lines",
 							E.filename ? E.filename : "[No Name]", E.numrows);
-	int rlen = snprintf(rstatus, sizeof(rstatus), "%d,%d", E.cy + 1, E.cx + 1);
+	int rlen = snprintf(rstatus, sizeof(rstatus), "%d,%d-%d", E.cy + 1, E.rx + 1, E.cx + 1);
 	abAppend(ab, status, len);
 	while (len < E.screencols)
 	{
@@ -539,14 +577,15 @@ void editorSetStatusMessage(char *fmt, ...)
 void editorMoveCursor(int key)
 {
 	// 判断下一行是否存在并获取本行
-	erow * row = (E.cy > E.numrows) ? NULL : &E.row[E.cy];
+	erow * row = (E.cy < E.numrows) ? &E.row[E.cy] : NULL;
 
 	switch (key)
 	{
 	case ARROW_LEFT:
 		if (E.cx != 0)
 		{
-			E.cx--;
+			// E.cx--;
+			E.cx -= char_byte(row->chars[E.cx - 1]);
 		}
 		else if (E.cy != 0)
 		{
@@ -558,7 +597,8 @@ void editorMoveCursor(int key)
 	case ARROW_RIGHT:
 		if (row && E.cx < row->size)
 		{
-			E.cx++;
+			// E.cx++;
+			E.cx += char_byte(row->chars[E.cx]);
 		}
 		else if (row && E.cx == row->size)
 		{
