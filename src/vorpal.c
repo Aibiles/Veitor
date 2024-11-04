@@ -16,6 +16,7 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#include <stdbool.h>
  
 #pragma endregion
 
@@ -257,51 +258,85 @@ int getWindowSize(int *rows, int *cols)
 /*** row operations ***/
 #pragma region
 
-// 将tab转换为指定空格长度
-int editorRowCxToRx(erow *row, int cx)
-{
-	int rx = 0;
-	int j;
-	for (j = 0; j < cx; j++)
-	{
-		if (row->chars[j] == '\t')
-			rx += (VEITOR_TAP_STOP - 1) - (j % VEITOR_TAP_STOP);
-		rx++;
-	}
+// 判断字符是否是多字节的一部分 10XXXXXX
+bool is_continuation_byte(char c) {
+    return (c & 0xC0) == 0x80;
+}
 
-	return rx;
+// 检查当前字符是否为多字节字符（超过 2 个字节）
+int char_byte(char str) {
+    if ((str & 0xF0) == 0xF0) {  // 检查前 4 位是否为 11110
+        return 4;
+    } else if ((str & 0xE0) == 0xE0) {  // 检查前 3 位是否为 1110
+        return 3;
+    } else if ((str & 0xC0) == 0xC0) {  // 检查前 2 位是否为 110
+        return 2;
+    }
+    return 1;
+}
+
+// 将tab转换为指定空格长度，实现tab的秘密   ；按照字节大小读取
+int editorRowCxToRx(erow *row, int cx) 
+{
+    int j = 0;
+    int rx = 0;
+	// 使用字符的字节数替换 字节递增
+    while (j < cx) 
+	{
+		int bytesize = char_byte(row->chars[j]);
+        if (row->chars[j] == '\t') 
+		{
+            rx += (VEITOR_TAP_STOP - 1) - (rx % VEITOR_TAP_STOP);
+        }
+		else if (bytesize > 2)
+			rx++;
+        rx++;
+        j += bytesize;
+	}
+    return rx;
 }
 
 void editorUpdateRow(struct erow *row)
 {
-	int j;
+	int j = 0;
 	int tab = 0;
-	for (j = 0; j < row->size; j++)
+	// 使用字符的字节数替换 字节递增
+	while (j < row->size)
+	{
+		int bytesize = char_byte(row->chars[j]);
 		if (row->chars[j] == '\t')
 			tab++;
+		
+		j += bytesize;
+	}
 
 	free(row->render);
 	row->render = malloc(row->size + tab * (VEITOR_TAP_STOP - 1) + 1);
 
 	int index = 0;
-	for (j = 0; j < row->size; j++)
+	j = 0;
+	// 使用字符的字节数替换 字节递增
+	while (j < row->size) 
 	{
-		if (row->chars[j] == '\t')
+        int bytesize = char_byte(row->chars[j]);
+        if (row->chars[j] == '\t') 
 		{
-			row->render[index++] = ' ';
-			while(index % VEITOR_TAP_STOP != 0) 
-				row->render[index++] = ' ';
-		}
-		else
+            row->render[index++] = ' ';
+            while (index % VEITOR_TAP_STOP != 0) 
+                row->render[index++] = ' ';
+        } 
+		else 
 		{
-			row->render[index++] = row->chars[j];
-		}
-	}
+            memcpy(&row->render[index], &row->chars[j], bytesize);
+            index += bytesize;
+        }
+        j += bytesize;
+    }
 	row->render[index] = '\0';
 	row->rsize = index;
 }
 
-// 输出缓冲区，立即展示一页内的所有内容
+// 读取文件内容
 void editorAppendRow(char *s, size_t len)
 {
 	// realloc可以调整分配内存大小，如果小了会截断
@@ -468,7 +503,7 @@ void editorDrawStatuBar(struct abuf*ab)
 	char status[80], rstatus[80];
 	int len = snprintf(status, sizeof(status), "%.20s - %d lines",
 							E.filename ? E.filename : "[No Name]", E.numrows);
-	int rlen = snprintf(rstatus, sizeof(rstatus), "%d,%d", E.cy + 1, E.cx + 1);
+	int rlen = snprintf(rstatus, sizeof(rstatus), "%d,%d-%d", E.cy + 1, E.rx + 1, E.cx + 1);
 	abAppend(ab, status, len);
 	while (len < E.screencols)
 	{
@@ -539,14 +574,27 @@ void editorSetStatusMessage(char *fmt, ...)
 void editorMoveCursor(int key)
 {
 	// 判断下一行是否存在并获取本行
-	erow * row = (E.cy > E.numrows) ? NULL : &E.row[E.cy];
+	erow * row = (E.cy < E.numrows) ? &E.row[E.cy] : NULL;
 
 	switch (key)
 	{
 	case ARROW_LEFT:
 		if (E.cx != 0)
 		{
-			E.cx--;
+			if (is_continuation_byte(row->chars[E.cx - 1]) && !isalnum(row->chars[E.cx - 1])) 
+			{
+				// 如果前面一个字符是多字节字符的后续字节，继续向左移动，
+				while (E.cx > 0 && is_continuation_byte(row->chars[E.cx - 1])) 
+				{
+					E.cx--;
+				}
+				// 多字节字符的第一个
+				E.cx--;
+			} 
+			else 
+			{
+				E.cx--;
+			}
 		}
 		else if (E.cy != 0)
 		{
@@ -558,14 +606,14 @@ void editorMoveCursor(int key)
 	case ARROW_RIGHT:
 		if (row && E.cx < row->size)
 		{
-			E.cx++;
+			// E.cx++;
+			E.cx += char_byte(row->chars[E.cx]);
 		}
 		else if (row && E.cx == row->size)
 		{
 			E.cy++;
 			E.cx = 0;
 		}
-		
 		break;
 	case ARROW_UP:
 		if (E.cy != 0)
@@ -574,11 +622,14 @@ void editorMoveCursor(int key)
 	case ARROW_DOWN:
 		// 当文本坐标小于文本行数时
 		if (E.cy < E.numrows )
+		{
 			E.cy++;
+			E.cx = E.rx;
+		}
 		break;
 	}
 
-	row = (E.cy > E.numrows) ? NULL : &E.row[E.cy];
+	row = (E.cy < E.numrows) ? &E.row[E.cy] : NULL;
 	int rowlen = row ? row->size : 0;
 	if (E.cx > rowlen)
 		E.cx = rowlen;
@@ -604,7 +655,7 @@ void editorProcessKeypress()
 		break;
 	case END_KEY:
 		if (E.cy < E.numrows)
-			E.cx = E.row[E.cy].rsize;
+			E.cx = E.row[E.cy].size;
 		break;
 
 	case PAGE_UP:
@@ -668,8 +719,8 @@ int main(int argc, char *args[])
 	enableRawMode();
 	initEditor();
 	// if (argc >= 2)
-	// 	editorOpen(args[1]);
-	editorOpen("../../src/vorpal.c");
+		// editorOpen(args[1]);
+	editorOpen("../../src/Makefile");
 
 	editorSetStatusMessage("HELP: Ctrl-Q = quit");
 
