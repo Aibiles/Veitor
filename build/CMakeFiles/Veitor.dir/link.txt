@@ -1,1 +1,0 @@
-/usr/bin/cc -g CMakeFiles/Veitor.dir/src/vorpal.c.o -o bin/Veitor
