@@ -1,8 +1,9 @@
 # Ignore CMake build directory
+./build/
 build/
 
 # Ignore CMake cache files
-CMakeCache.txt
+./CMakeCache.txt
 
 # Ignore CMake generated files
 CMakeFiles/
