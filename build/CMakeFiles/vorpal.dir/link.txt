@@ -1,1 +1,0 @@
-/usr/bin/cc -g CMakeFiles/vorpal.dir/src/main.c.o CMakeFiles/vorpal.dir/src/editor.c.o CMakeFiles/vorpal.dir/src/terminal.c.o CMakeFiles/vorpal.dir/src/row_operations.c.o CMakeFiles/vorpal.dir/src/file_io.c.o CMakeFiles/vorpal.dir/src/abuf.c.o -o bin/vorpal

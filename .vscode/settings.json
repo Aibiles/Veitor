@@ -4,7 +4,12 @@
         "errno.h": "c",
         "string.h": "c",
         "termios.h": "c",
+<<<<<<< HEAD
         "wchar.h": "c"
+=======
+        "wchar.h": "c",
+        "random": "c"
+>>>>>>> refs/remotes/origin/dev
     },
     "C_Cpp.errorSquiggles": "disabled"
 }

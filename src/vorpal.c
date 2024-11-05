@@ -32,6 +32,7 @@
 // 配置按键绑定枚举变量
 enum editorKey
 {
+	BACKSPACE = 127,
 	ARROW_LEFT = 1000,
 	ARROW_RIGHT,
 	ARROW_UP,
@@ -355,7 +356,29 @@ void editorAppendRow(char *s, size_t len)
 	E.numrows++;
 }
 
+void editorRowInsertChar(erow *row, int at, int c)
+{
+	if (at < 0 || at > row->size) at = row->size;
+	row->chars = realloc(row->chars, row->size + 2);
+	memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+	row->size ++;
+	row->chars[at] = c;
+	editorUpdateRow(row);
+}
+
 #pragma endregion
+
+/*** editor operations ***/
+
+void editorInsertChar(int c)
+{
+	if (E.cy == E.numrows)
+	{
+		editorAppendRow(" ", 1);
+	}
+	editorRowInsertChar(&E.row[E.cy], E.cx, c);
+	E.cx++;
+}
 
 /*** file i/o ***/
 #pragma region
@@ -578,55 +601,55 @@ void editorMoveCursor(int key)
 
 	switch (key)
 	{
-	case ARROW_LEFT:
-		if (E.cx != 0)
-		{
-			if (is_continuation_byte(row->chars[E.cx - 1]) && !isalnum(row->chars[E.cx - 1])) 
+		case ARROW_LEFT:
+			if (E.cx != 0)
 			{
-				// 如果前面一个字符是多字节字符的后续字节，继续向左移动，
-				while (E.cx > 0 && is_continuation_byte(row->chars[E.cx - 1])) 
+				if (is_continuation_byte(row->chars[E.cx - 1]) && !isalnum(row->chars[E.cx - 1])) 
+				{
+					// 如果前面一个字符是多字节字符的后续字节，继续向左移动，
+					while (E.cx > 0 && is_continuation_byte(row->chars[E.cx - 1])) 
+					{
+						E.cx--;
+					}
+					// 多字节字符的第一个
+					E.cx--;
+				} 
+				else 
 				{
 					E.cx--;
 				}
-				// 多字节字符的第一个
-				E.cx--;
-			} 
-			else 
-			{
-				E.cx--;
 			}
-		}
-		else if (E.cy != 0)
-		{
-			row = &E.row[E.cy - 1];
-			E.cy--;
-			E.cx = row->size;
-		}
-		break;
-	case ARROW_RIGHT:
-		if (row && E.cx < row->size)
-		{
-			// E.cx++;
-			E.cx += char_byte(row->chars[E.cx]);
-		}
-		else if (row && E.cx == row->size)
-		{
-			E.cy++;
-			E.cx = 0;
-		}
-		break;
-	case ARROW_UP:
-		if (E.cy != 0)
-			E.cy--;
-		break;
-	case ARROW_DOWN:
-		// 当文本坐标小于文本行数时
-		if (E.cy < E.numrows )
-		{
-			E.cy++;
-			E.cx = E.rx;
-		}
-		break;
+			else if (E.cy != 0)
+			{
+				row = &E.row[E.cy - 1];
+				E.cy--;
+				E.cx = row->size;
+			}
+			break;
+		case ARROW_RIGHT:
+			if (row && E.cx < row->size)
+			{
+				// E.cx++;
+				E.cx += char_byte(row->chars[E.cx]);
+			}
+			else if (row && E.cx == row->size)
+			{
+				E.cy++;
+				E.cx = 0;
+			}
+			break;
+		case ARROW_UP:
+			if (E.cy != 0)
+				E.cy--;
+			break;
+		case ARROW_DOWN:
+			// 当文本坐标小于文本行数时
+			if (E.cy < E.numrows )
+			{
+				E.cy++;
+				E.cx = E.rx;
+			}
+			break;
 	}
 
 	row = (E.cy < E.numrows) ? &E.row[E.cy] : NULL;
@@ -643,47 +666,65 @@ void editorProcessKeypress()
 
 	switch (c)
 	{
-	case CTRL_KEY('q'):
-		// 退出时清屏
-		write(STDOUT_FILENO, "\x1b[2J", 4);
-		write(STDOUT_FILENO, "\x1b[H", 3);
-		exit(0);
+		case '\r':
+			/* TODO*/
+			break;
+
+		case CTRL_KEY('q'):
+			// 退出时清屏
+			write(STDOUT_FILENO, "\x1b[2J", 4);
+			write(STDOUT_FILENO, "\x1b[H", 3);
+			exit(0);
+			break;
+
+		case HOME_KEY:
+			E.cx = 0;
+			break;
+		case END_KEY:
+			if (E.cy < E.numrows)
+				E.cx = E.row[E.cy].size;
+			break;
+
+		case BACKSPACE:
+		case CTRL_KEY('h'):
+		case DEL_KEY:
+			/* TODO*/
+			break;
+
+		case PAGE_UP:
+		case PAGE_DOWN:
+			{	
+				// 页面开头的上一页，结尾的下一页
+				if (c == PAGE_UP)
+				{
+					E.cy = E.rowoff;
+				}
+				else if (c == PAGE_DOWN)
+				{
+					E.cy = E.rowoff + E.screenrows - 1;
+					if (E.cy > E.numrows) E.cy = E.numrows;
+				}
+
+				int times = E.screenrows-1;
+				while (times--)
+					editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
+			}
+			break;
+
+		case ARROW_UP:
+		case ARROW_DOWN:
+		case ARROW_LEFT:
+		case ARROW_RIGHT:
+			editorMoveCursor(c);
 		break;
 
-	case HOME_KEY:
-		E.cx = 0;
-		break;
-	case END_KEY:
-		if (E.cy < E.numrows)
-			E.cx = E.row[E.cy].size;
-		break;
+		case CTRL_KEY('l'):
+		case '\x1b':
+			break;
 
-	case PAGE_UP:
-	case PAGE_DOWN:
-	{
-		// 页面开头的上一页，结尾的下一页
-		if (c == PAGE_UP)
-		{
-			E.cy = E.rowoff;
-		}
-		else if (c == PAGE_DOWN)
-		{
-			E.cy = E.rowoff + E.screenrows - 1;
-			if (E.cy > E.numrows) E.cy = E.numrows;
-		}
-
-		int times = E.screenrows-1;
-		while (times--)
-			editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
-	}
-	break;
-
-	case ARROW_UP:
-	case ARROW_DOWN:
-	case ARROW_LEFT:
-	case ARROW_RIGHT:
-		editorMoveCursor(c);
-		break;
+		default:
+			editorInsertChar(c);
+			break;
 	}
 }
 

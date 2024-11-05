@@ -1,3 +1,2 @@
-你好👋ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+vorpal: vorpal.c
 	$(CC) vorpal.c -o vorpal -Wall -Wextra -pedantic -std=c99

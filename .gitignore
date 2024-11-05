@@ -27,3 +27,6 @@ Makefile
 *.log
 *.out
 *.errd
+
+src/test.c
+src/test
