@@ -7,6 +7,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -25,6 +26,7 @@
 
 #define VEITOR_VERSION "0.0.1"
 #define VEITOR_TAP_STOP 8
+#define VEITOR_QUIT_TIME 3
 
 // (a & 0x1f) =  (11000001 & 00011111) = 1
 #define CTRL_KEY(k) ((k) & 0x1f)
@@ -68,6 +70,7 @@ struct editorConfig
 	int screenrows; // 终端行数
 	int screencols;  // 终端列数
 	int numrows;	// 打开文本的行数
+	int dirty;
 	erow *row;		 // 存储文本的数组
 	char *filename;
 	char statusmsg[80];
@@ -76,6 +79,12 @@ struct editorConfig
 };
 
 struct editorConfig E;
+
+#pragma endregion
+
+/*** prototypes ***/
+#pragma region
+void editorSetStatusMessage(char *fmt, ...);
 
 #pragma endregion
 
@@ -354,6 +363,7 @@ void editorAppendRow(char *s, size_t len)
 	editorUpdateRow((&E.row[at]));
 
 	E.numrows++;
+	E.dirty++;
 }
 
 void editorRowInsertChar(erow *row, int at, int c)
@@ -364,12 +374,23 @@ void editorRowInsertChar(erow *row, int at, int c)
 	row->size ++;
 	row->chars[at] = c;
 	editorUpdateRow(row);
+	E.dirty++;
+}
+
+void editorRowDelChar(erow *row, int at)
+{
+	if (at < 0 || at > row->size) return;
+	int bytesize = char_byte(row->chars[at]);
+	memmove(&row->chars[at], &row->chars[at + bytesize], row->size - at + bytesize);
+	row->size -= bytesize;
+	editorUpdateRow(row);
+	E.dirty++;
 }
 
 #pragma endregion
 
 /*** editor operations ***/
-
+#pragma region
 void editorInsertChar(int c)
 {
 	if (E.cy == E.numrows)
@@ -380,8 +401,46 @@ void editorInsertChar(int c)
 	E.cx++;
 }
 
+void editorDelChar()
+{
+	if (E.cy == E.numrows) return;
+
+	erow *row = &E.row[E.cy];
+	if (E.cx > 0)
+	{
+		while (is_continuation_byte(row->chars[E.cx - 1]))
+			E.cx--;
+		editorRowDelChar(row, E.cx - 1);
+		E.cx--;
+	}
+}
+
+#pragma endregion
+
 /*** file i/o ***/
 #pragma region
+
+char *editorRowsToString(int *buflen) 
+{
+	int totlen = 0;
+	int j;
+	for (j = 0; j < E.numrows; j++)
+	{
+		totlen += E.row[j].size + 1;
+	}
+	*buflen = totlen;
+
+	char *buf = malloc(totlen);
+	char *p = buf;
+	for (j = 0; j < E.numrows; j++)
+	{
+		memcpy(p, E.row[j].chars, E.row[j].size);
+		p += E.row[j].size;
+		*p = '\n';
+		p++;
+	}
+	return buf;
+}
 
 // 打开文件，读取
 void editorOpen(char *filename)
@@ -406,6 +465,34 @@ void editorOpen(char *filename)
 
 	free(line);
 	fclose(fp);
+
+	E.dirty = 0;
+}
+
+void editorSave()
+{
+	if (E.filename == NULL) return;
+
+	int len;
+	char *buf = editorRowsToString(&len);
+
+	int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
+	if (fd != -1)
+	{
+		if (ftruncate(fd, len) != -1)
+		{
+			if (write(fd, buf, len) == len){
+				close(fd);
+				free(buf);
+				editorSetStatusMessage("%d bytes written to disk", len);
+				E.dirty = 0;
+				return;
+			}
+		}
+		close(fd);
+	}
+	free(buf);
+	editorSetStatusMessage("Can't save! I/O error %s", strerror(errno));
 }
 
 #pragma endregion
@@ -524,8 +611,9 @@ void editorDrawStatuBar(struct abuf*ab)
 	abAppend(ab, "\x1b[7m", 4);
 
 	char status[80], rstatus[80];
-	int len = snprintf(status, sizeof(status), "%.20s - %d lines",
-							E.filename ? E.filename : "[No Name]", E.numrows);
+	int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
+							E.filename ? E.filename : "[No Name]", E.numrows,
+							E.dirty ? "(modified)" : "");
 	int rlen = snprintf(rstatus, sizeof(rstatus), "%d,%d-%d", E.cy + 1, E.rx + 1, E.cx + 1);
 	abAppend(ab, status, len);
 	while (len < E.screencols)
@@ -662,6 +750,8 @@ void editorMoveCursor(int key)
 // 按键映射
 void editorProcessKeypress()
 {
+	static int quit_times = VEITOR_QUIT_TIME;
+
 	int c = editorReadKey();
 
 	switch (c)
@@ -671,10 +761,20 @@ void editorProcessKeypress()
 			break;
 
 		case CTRL_KEY('q'):
+			if (E.dirty && quit_times > 0)
+			{
+				editorSetStatusMessage("WARNING!!! File has unsaved changes. Press Ctrl-Q %d more times to quit.", quit_times);
+				quit_times--;
+				return;
+			}
 			// 退出时清屏
 			write(STDOUT_FILENO, "\x1b[2J", 4);
 			write(STDOUT_FILENO, "\x1b[H", 3);
 			exit(0);
+			break;
+		
+		case CTRL_KEY('s'):
+			editorSave();
 			break;
 
 		case HOME_KEY:
@@ -688,7 +788,7 @@ void editorProcessKeypress()
 		case BACKSPACE:
 		case CTRL_KEY('h'):
 		case DEL_KEY:
-			/* TODO*/
+			editorDelChar();
 			break;
 
 		case PAGE_UP:
@@ -726,6 +826,8 @@ void editorProcessKeypress()
 			editorInsertChar(c);
 			break;
 	}
+
+	quit_times = VEITOR_QUIT_TIME;
 }
 
 #pragma endregion
@@ -742,6 +844,7 @@ void initEditor()
 	E.rowoff = 0;
 	E.coloff = 0;
 	E.numrows = 0;
+	E.dirty = 0;
 	E.row = NULL;
 	E.filename = NULL;
 	E.statusmsg[0] = '\0';
@@ -763,7 +866,7 @@ int main(int argc, char *args[])
 		// editorOpen(args[1]);
 	editorOpen("../../src/Makefile");
 
-	editorSetStatusMessage("HELP: Ctrl-Q = quit");
+	editorSetStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit");
 
 	while (1)
 	{
