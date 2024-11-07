@@ -9,7 +9,8 @@ link_directories(${PROJECT_SOURCE_DIR}/lib)  # 指定库文件目录
 
 set(SOURCES
        src/vorpal.c
-        )
+       # src/test.c
+)
 
 add_executable(Veitor ${SOURCES})
 

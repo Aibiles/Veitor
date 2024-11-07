@@ -308,6 +308,26 @@ int editorRowCxToRx(erow *row, int cx)
     return rx;
 }
 
+int editorRowRxToCx(erow *row, int rx)
+{
+	int cur_rx = 0;
+	int cx = 0;
+
+	while (cx < row->size)
+	{
+		int bytesize = char_byte(row->chars[cx]);
+		if (row->chars[cx] == '\t')
+			cur_rx += (VEITOR_TAP_STOP - 1) - (cx % VEITOR_TAP_STOP);
+		else if (bytesize > 2)
+			cur_rx ++;
+		cur_rx ++;
+
+		if (cur_rx > rx) return cx;
+		cx += bytesize;
+	}
+	return cx;
+}
+
 void editorUpdateRow(struct erow *row)
 {
 	int j = 0;
@@ -510,7 +530,7 @@ void editorOpen(char *filename)
 
 void editorSave()
 {
-`	if (E.filename == NULL)
+	if (E.filename == NULL)
 	{
 		E.filename = editorPrompt("Save as: %s (ESC to cancel)");
     	if (E.filename == NULL) 
@@ -543,6 +563,30 @@ void editorSave()
 }
 
 #pragma endregion
+
+/*** find ***/
+void editorFind()
+{
+	char *query = editorPrompt("Search: %s (Esc to cancel)");
+	if (query == NULL) return;
+
+	int i;
+	for (i = 0; i < E.numrows; i++)
+	{
+		erow *row = &E.row[i];
+		char *match;
+		match = strstr(row->render, query);
+
+		if (match)
+		{
+			E.cy = i;
+			E.cx = editorRowRxToCx(row, match - row->render);
+			E.rowoff = E.numrows;
+			break;
+		}
+	}
+	free(query);
+}
 
 /*** appenf buffer ***/
 #pragma region
@@ -824,17 +868,15 @@ void editorMoveCursor(int key)
 				E.cy--;
 				while (is_continuation_byte(E.row[E.cy].chars[E.cx]))
 					E.cx--;
-				// E.cx = E.rx;
 			}
 			break;
 		case ARROW_DOWN:
 			// 当文本坐标小于文本行数时
-			if (E.cy < E.numrows )
+			if (E.cy < E.numrows)
 			{
 				E.cy++;
-				while (is_continuation_byte(E.row[E.cy].chars[E.cx]))
+				while (E.numrows - E.cy && is_continuation_byte(E.row[E.cy].chars[E.cx] ))
 					E.cx--;
-				// E.cx = E.rx;
 			}
 			break;
 	}
@@ -876,6 +918,11 @@ void editorProcessKeypress()
 	{
 		case '\r':
 			editerInsertNewLine();
+			break;
+
+		case CTRL_KEY('f'):
+		// case 'f':
+			editorFind();
 			break;
 
 		case CTRL_KEY('q'):
@@ -922,7 +969,6 @@ void editorProcessKeypress()
 					E.cy = E.rowoff + E.screenrows - 1;
 					if (E.cy > E.numrows) E.cy = E.numrows;
 				}
-
 				int times = E.screenrows-1;
 				while (times--)
 					editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
@@ -980,11 +1026,11 @@ int main(int argc, char *args[])
 {
 	enableRawMode();
 	initEditor();
-	if (argc >= 2)
-		editorOpen(args[1]);
-	// editorOpen("../src/Makefile");
+	// if (argc >= 2)
+		// editorOpen(args[1]);
+	editorOpen("../src/Makefile");
 
-	editorSetStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit");
+	editorSetStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find");
 
 	while (1)
 	{
