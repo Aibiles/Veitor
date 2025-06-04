@@ -1,12 +1,24 @@
 {
     "configurations": [
         {
-            "name": "Linux",
+            "name": "gcc",
             "includePath": [
                 "${workspaceFolder}/**"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c99",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "linux-gcc-x64",
+            "configurationProvider": "ms-vscode.cmake-tools"
+        },
+        {
+            "name": "mingw64",
+            "includePath": [
+                "${workspaceFolder}/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/i686-w64-mingw32-gcc",
             "cStandard": "c99",
             "cppStandard": "gnu++17",
             "intelliSenseMode": "linux-gcc-x64",

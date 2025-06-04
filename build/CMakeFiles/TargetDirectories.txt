@@ -1,3 +1,0 @@
-/home/mimsy/Veitor/build/CMakeFiles/Veitor.dir
-/home/mimsy/Veitor/build/CMakeFiles/edit_cache.dir
-/home/mimsy/Veitor/build/CMakeFiles/rebuild_cache.dir

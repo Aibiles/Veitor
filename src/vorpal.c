@@ -7,6 +7,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -25,6 +26,7 @@
 
 #define VEITOR_VERSION "0.0.1"
 #define VEITOR_TAP_STOP 8
+#define VEITOR_QUIT_TIME 1
 
 // (a & 0x1f) =  (11000001 & 00011111) = 1
 #define CTRL_KEY(k) ((k) & 0x1f)
@@ -32,6 +34,7 @@
 // 配置按键绑定枚举变量
 enum editorKey
 {
+	BACKSPACE = 127,
 	ARROW_LEFT = 1000,
 	ARROW_RIGHT,
 	ARROW_UP,
@@ -67,6 +70,7 @@ struct editorConfig
 	int screenrows; // 终端行数
 	int screencols;  // 终端列数
 	int numrows;	// 打开文本的行数
+	int dirty;
 	erow *row;		 // 存储文本的数组
 	char *filename;
 	char statusmsg[80];
@@ -75,6 +79,14 @@ struct editorConfig
 };
 
 struct editorConfig E;
+
+#pragma endregion
+
+/*** prototypes ***/
+#pragma region
+void editorSetStatusMessage(char *fmt, ...);
+void editorRefreshScreen();
+char *editorPrompt(char *prompt);
 
 #pragma endregion
 
@@ -275,7 +287,7 @@ int char_byte(char str) {
     return 1;
 }
 
-// 将tab转换为指定空格长度，实现tab的秘密   ；按照字节大小读取
+// 将tab转换为指定空格长度，实现tab   ；按照字节大小读取
 int editorRowCxToRx(erow *row, int cx) 
 {
     int j = 0;
@@ -294,6 +306,26 @@ int editorRowCxToRx(erow *row, int cx)
         j += bytesize;
 	}
     return rx;
+}
+
+int editorRowRxToCx(erow *row, int rx)
+{
+	int cur_rx = 0;
+	int cx = 0;
+
+	while (cx < row->size)
+	{
+		int bytesize = char_byte(row->chars[cx]);
+		if (row->chars[cx] == '\t')
+			cur_rx += (VEITOR_TAP_STOP - 1) - (cx % VEITOR_TAP_STOP);
+		else if (bytesize > 2)
+			cur_rx ++;
+		cur_rx ++;
+
+		if (cur_rx > rx) return cx;
+		cx += bytesize;
+	}
+	return cx;
 }
 
 void editorUpdateRow(struct erow *row)
@@ -337,12 +369,15 @@ void editorUpdateRow(struct erow *row)
 }
 
 // 读取文件内容
-void editorAppendRow(char *s, size_t len)
+void editorInsertRow(int at, char *s, size_t len)
 {
+	if (at < 0 || at > E.numrows) return;
+
 	// realloc可以调整分配内存大小，如果小了会截断
 	E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
+	// 将at行往下的内容移到下一行
+	memmove(&E.row[at + 1], &E.row[at], sizeof(erow) * (E.numrows - at));
 
-	int at = E.numrows;
 	E.row[at].size = len;
 	E.row[at].chars = malloc(len + 1);
 	memcpy(E.row[at].chars, s, len);
@@ -353,12 +388,118 @@ void editorAppendRow(char *s, size_t len)
 	editorUpdateRow((&E.row[at]));
 
 	E.numrows++;
+	E.dirty++;
+}
+
+void editorRowInsertChar(erow *row, int at, int c)
+{
+	if (at < 0 || at > row->size) at = row->size;
+	row->chars = realloc(row->chars, row->size + 2);
+	memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+	row->size ++;
+	row->chars[at] = c;
+	editorUpdateRow(row);
+	E.dirty++;
+}
+
+void editorRowDelChar(erow *row, int at)
+{
+	if (at < 0 || at > row->size) return;
+	int bytesize = char_byte(row->chars[at]);
+	memmove(&row->chars[at], &row->chars[at + bytesize], row->size - at + bytesize);
+	row->size -= bytesize;
+	editorUpdateRow(row);
+	E.dirty++;
+}
+
+void editorFreeRow(erow *row)
+{
+	free(row->chars);
+	free(row->render);
+}
+
+void editorDelRow(int at)
+{
+	if (at < 0 || at >= E.numrows) return;
+
+	editorFreeRow(&E.row[at]);
+	memmove(&E.row[at], &E.row[at + 1], sizeof(erow) * (E.numrows - at - 1));
+	E.numrows--;
+	E.dirty++;
+}
+
+void editorRowAppendString(erow *row, char *s, size_t len)
+{
+	row->chars = realloc(row->chars, row->size + len + 1);
+	memmove(&row->chars[row->size], s, len);
+	row->size += len;
+	row->chars[row->size] = '\0';
+	editorUpdateRow(row);
+	E.dirty++;
+}
+
+#pragma endregion
+
+/*** editor operations ***/
+#pragma region
+void editorInsertChar(int c)
+{
+	if (E.cy == E.numrows)
+	{
+		editorInsertRow(E.numrows, " ", 1);
+	}
+	editorRowInsertChar(&E.row[E.cy], E.cx, c);
+	E.cx++;
+}
+
+void editorDelChar()
+{
+	if (E.cy == E.numrows) return;
+	if (E.cx == 0 && E.cy == 0) return;
+
+	erow *row = &E.row[E.cy];
+	if (E.cx > 0)
+	{
+		while (is_continuation_byte(row->chars[E.cx - 1]))
+			E.cx--;
+		editorRowDelChar(row, E.cx - 1);
+		E.cx--;
+	}
+	else
+	{
+		E.cx = E.row[E.cy - 1].size;
+		editorRowAppendString(&E.row[E.cy - 1], row->chars, row->size);
+		editorDelRow(E.cy);
+		E.cy--;
+	}
 }
 
 #pragma endregion
 
 /*** file i/o ***/
 #pragma region
+
+char *editorRowsToString(int *buflen) 
+{
+	int totlen = 0;
+	int j;
+	for (j = 0; j < E.numrows; j++)
+	{
+		totlen += E.row[j].size + 1;
+	}
+	*buflen = totlen;
+
+	char *buf = malloc(totlen);
+	char *p = buf;
+	for (j = 0; j < E.numrows; j++)
+	{
+		memcpy(p, E.row[j].chars, E.row[j].size);
+		p += E.row[j].size;
+		*p = '\n';
+		p++;
+	}
+	return buf;
+}
 
 // 打开文件，读取
 void editorOpen(char *filename)
@@ -378,14 +519,74 @@ void editorOpen(char *filename)
 		while (linelen > 0 && (line[linelen - 1] == '\n' ||
 							   line[linelen - 1] == '\r'))
 			linelen--;
-		editorAppendRow(line, linelen);
+		editorInsertRow(E.numrows, line, linelen);
 	}
 
 	free(line);
 	fclose(fp);
+
+	E.dirty = 0;
+}
+
+void editorSave()
+{
+	if (E.filename == NULL)
+	{
+		E.filename = editorPrompt("Save as: %s (ESC to cancel)");
+    	if (E.filename == NULL) 
+		{
+      		editorSetStatusMessage("Save aborted");
+      		return;
+    	}
+	}
+
+	int len;
+	char *buf = editorRowsToString(&len);
+
+	int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
+	if (fd != -1)
+	{
+		if (ftruncate(fd, len) != -1)
+		{
+			if (write(fd, buf, len) == len){
+				close(fd);
+				free(buf);
+				editorSetStatusMessage("%d bytes written to disk", len);
+				E.dirty = 0;
+				return;
+			}
+		}
+		close(fd);
+	}
+	free(buf);
+	editorSetStatusMessage("Can't save! I/O error %s", strerror(errno));
 }
 
 #pragma endregion
+
+/*** find ***/
+void editorFind()
+{
+	char *query = editorPrompt("Search: %s (Esc to cancel)");
+	if (query == NULL) return;
+
+	int i;
+	for (i = 0; i < E.numrows; i++)
+	{
+		erow *row = &E.row[i];
+		char *match;
+		match = strstr(row->render, query);
+
+		if (match)
+		{
+			E.cy = i;
+			E.cx = editorRowRxToCx(row, match - row->render);
+			E.rowoff = E.numrows;
+			break;
+		}
+	}
+	free(query);
+}
 
 /*** appenf buffer ***/
 #pragma region
@@ -501,8 +702,9 @@ void editorDrawStatuBar(struct abuf*ab)
 	abAppend(ab, "\x1b[7m", 4);
 
 	char status[80], rstatus[80];
-	int len = snprintf(status, sizeof(status), "%.20s - %d lines",
-							E.filename ? E.filename : "[No Name]", E.numrows);
+	int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
+							E.filename ? E.filename : "[No Name]", E.numrows,
+							E.dirty ? "(modified)" : "");
 	int rlen = snprintf(rstatus, sizeof(rstatus), "%d,%d-%d", E.cy + 1, E.rx + 1, E.cx + 1);
 	abAppend(ab, status, len);
 	while (len < E.screencols)
@@ -529,7 +731,7 @@ void editorDrawMessageBar(struct abuf* ab)
 		abAppend(ab, E.statusmsg, msglen);
 }
 
-// 编辑刷新后的界面
+// 刷新后的界面
 void editorRefreshScreen()
 {
 	editorScroll();
@@ -570,6 +772,52 @@ void editorSetStatusMessage(char *fmt, ...)
 /*** input ***/
 #pragma region
 
+char *editorPrompt(char *prompt)
+{
+	size_t bufsize = 128;
+	char *buf = malloc(bufsize);
+
+	size_t buflen = 0;
+	buf[0] = '\0';
+
+	while (1)
+	{
+		editorSetStatusMessage(prompt, buf);
+		editorRefreshScreen();
+
+		int c = editorReadKey();
+		if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) 
+		{	
+			if (buflen != 0) buf[--buflen] = '\0';
+    	} 
+		else if (c == '\x1b') 
+		{
+			editorSetStatusMessage("");
+			free(buf);
+			return NULL;
+		}
+		else if (c == '\r')
+		{
+			if (buflen != 0)
+			{
+				editorSetStatusMessage("");
+				return buf;
+			}
+		}
+		else if (!iscntrl(c) && c < 128)
+		{
+			if (buflen == bufsize - 1)
+			{
+				bufsize *= 2;
+				buf = realloc(buf, bufsize);
+			}
+			buf[buflen++] = c;
+			buf[buflen] = '\0';
+		}
+
+	}
+}
+
 // 控制光标移动
 void editorMoveCursor(int key)
 {
@@ -578,55 +826,59 @@ void editorMoveCursor(int key)
 
 	switch (key)
 	{
-	case ARROW_LEFT:
-		if (E.cx != 0)
-		{
-			if (is_continuation_byte(row->chars[E.cx - 1]) && !isalnum(row->chars[E.cx - 1])) 
+		case ARROW_LEFT:
+			if (E.cx != 0)
 			{
-				// 如果前面一个字符是多字节字符的后续字节，继续向左移动，
-				while (E.cx > 0 && is_continuation_byte(row->chars[E.cx - 1])) 
+				if (is_continuation_byte(row->chars[E.cx - 1]) && !isalnum(row->chars[E.cx - 1])) 
+				{
+					// 如果前面一个字符是多字节字符的后续字节，继续向左移动，
+					while (E.cx > 0 && is_continuation_byte(row->chars[E.cx - 1])) 
+					{
+						E.cx--;
+					}
+					// 多字节字符的第一个
+					E.cx--;
+				} 
+				else 
 				{
 					E.cx--;
 				}
-				// 多字节字符的第一个
-				E.cx--;
-			} 
-			else 
-			{
-				E.cx--;
 			}
-		}
-		else if (E.cy != 0)
-		{
-			row = &E.row[E.cy - 1];
-			E.cy--;
-			E.cx = row->size;
-		}
-		break;
-	case ARROW_RIGHT:
-		if (row && E.cx < row->size)
-		{
-			// E.cx++;
-			E.cx += char_byte(row->chars[E.cx]);
-		}
-		else if (row && E.cx == row->size)
-		{
-			E.cy++;
-			E.cx = 0;
-		}
-		break;
-	case ARROW_UP:
-		if (E.cy != 0)
-			E.cy--;
-		break;
-	case ARROW_DOWN:
-		// 当文本坐标小于文本行数时
-		if (E.cy < E.numrows )
-		{
-			E.cy++;
-			E.cx = E.rx;
-		}
-		break;
+			else if (E.cy != 0)
+			{
+				row = &E.row[E.cy - 1];
+				E.cy--;
+				E.cx = row->size;
+			}
+			break;
+		case ARROW_RIGHT:
+			if (row && E.cx < row->size)
+			{
+				E.cx += char_byte(row->chars[E.cx]);
+			}
+			else if (row && E.cx == row->size)
+			{
+				E.cy++;
+				E.cx = 0;
+			}
+			break;
+		case ARROW_UP:
+			if (E.cy != 0)
+			{
+				E.cy--;
+				while (is_continuation_byte(E.row[E.cy].chars[E.cx]))
+					E.cx--;
+			}
+			break;
+		case ARROW_DOWN:
+			// 当文本坐标小于文本行数时
+			if (E.cy < E.numrows)
+			{
+				E.cy++;
+				while (E.numrows - E.cy && is_continuation_byte(E.row[E.cy].chars[E.cx] ))
+					E.cx--;
+			}
+			break;
 	}
 
 	row = (E.cy < E.numrows) ? &E.row[E.cy] : NULL;
@@ -636,55 +888,110 @@ void editorMoveCursor(int key)
 
 }
 
+void editerInsertNewLine()
+{
+	if (E.cx == 0)
+	{
+		editorInsertRow(E.cy, "", 0);
+	}
+	else
+	{
+		erow *row = &E.row[E.cy];
+		editorInsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx);
+		row = &E.row[E.cy];
+		row->size = E.cx;
+		row->chars[row->size] = '\0';
+		editorUpdateRow(row);
+	}
+	E.cy++;
+	E.cx = 0;
+}
+
 // 按键映射
 void editorProcessKeypress()
 {
+	static int quit_times = VEITOR_QUIT_TIME;
+
 	int c = editorReadKey();
 
 	switch (c)
 	{
-	case CTRL_KEY('q'):
-		// 退出时清屏
-		write(STDOUT_FILENO, "\x1b[2J", 4);
-		write(STDOUT_FILENO, "\x1b[H", 3);
-		exit(0);
+		case '\r':
+			editerInsertNewLine();
+			break;
+
+		case CTRL_KEY('f'):
+		// case 'f':
+			editorFind();
+			break;
+
+		case CTRL_KEY('q'):
+			if (E.dirty && quit_times > 0)
+			{
+				editorSetStatusMessage("WARNING!!! File has unsaved changes. Press Ctrl-Q %d more times to quit.", quit_times);
+				quit_times--;
+				return;
+			}
+			// 退出时清屏
+			write(STDOUT_FILENO, "\x1b[2J", 4);
+			write(STDOUT_FILENO, "\x1b[H", 3);
+			exit(0);
+			break;
+		
+		case CTRL_KEY('s'):
+			editorSave();
+			break;
+
+		case HOME_KEY:
+			E.cx = 0;
+			break;
+		case END_KEY:
+			if (E.cy < E.numrows)
+				E.cx = E.row[E.cy].size;
+			break;
+
+		case BACKSPACE:
+		case CTRL_KEY('h'):
+		case DEL_KEY:
+			editorDelChar();
+			break;
+
+		case PAGE_UP:
+		case PAGE_DOWN:
+			{	
+				// 页面开头的上一页，结尾的下一页
+				if (c == PAGE_UP)
+				{
+					E.cy = E.rowoff;
+				}
+				else if (c == PAGE_DOWN)
+				{
+					E.cy = E.rowoff + E.screenrows - 1;
+					if (E.cy > E.numrows) E.cy = E.numrows;
+				}
+				int times = E.screenrows-1;
+				while (times--)
+					editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
+			}
+			break;
+
+		case ARROW_UP:
+		case ARROW_DOWN:
+		case ARROW_LEFT:
+		case ARROW_RIGHT:
+			editorMoveCursor(c);
 		break;
 
-	case HOME_KEY:
-		E.cx = 0;
-		break;
-	case END_KEY:
-		if (E.cy < E.numrows)
-			E.cx = E.row[E.cy].size;
-		break;
+		case CTRL_KEY('l'):
+		case '\x1b':
+			break;
 
-	case PAGE_UP:
-	case PAGE_DOWN:
-	{
-		// 页面开头的上一页，结尾的下一页
-		if (c == PAGE_UP)
-		{
-			E.cy = E.rowoff;
-		}
-		else if (c == PAGE_DOWN)
-		{
-			E.cy = E.rowoff + E.screenrows - 1;
-			if (E.cy > E.numrows) E.cy = E.numrows;
-		}
-
-		int times = E.screenrows-1;
-		while (times--)
-			editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
+		default:
+			editorInsertChar(c);
+			break;
 	}
-	break;
 
-	case ARROW_UP:
-	case ARROW_DOWN:
-	case ARROW_LEFT:
-	case ARROW_RIGHT:
-		editorMoveCursor(c);
-		break;
-	}
+	quit_times = VEITOR_QUIT_TIME;
 }
 
 #pragma endregion
@@ -701,6 +1008,7 @@ void initEditor()
 	E.rowoff = 0;
 	E.coloff = 0;
 	E.numrows = 0;
+	E.dirty = 0;
 	E.row = NULL;
 	E.filename = NULL;
 	E.statusmsg[0] = '\0';
@@ -720,9 +1028,9 @@ int main(int argc, char *args[])
 	initEditor();
 	// if (argc >= 2)
 		// editorOpen(args[1]);
-	editorOpen("../../src/Makefile");
+	editorOpen("../src/Makefile");
 
-	editorSetStatusMessage("HELP: Ctrl-Q = quit");
+	editorSetStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find");
 
 	while (1)
 	{
